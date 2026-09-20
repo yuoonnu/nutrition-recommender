@@ -76,6 +76,18 @@ NUTRIENT_LABELS = {
     "cholesterol": "콜레스테롤",
 }
 
+# 추천 문구에 들어가는 goal/label을 한글로 보여주기 위한 매핑.
+# GOAL_WEIGHTS의 키(영문 프리셋 이름)와, custom_weights 사용 시 서버가 붙이는
+# 기본 라벨("custom")을 사람이 읽기 좋은 한글로 바꾼다.
+# health_text(자유 서술)처럼 매핑에 없는 값은 원문 그대로 사용된다.
+GOAL_LABELS_KO = {
+    "weight_loss": "체중감량",
+    "muscle": "가성비 근성장",
+    "blood_sugar": "혈당 케어",
+    "anti_swelling": "붓기 방지",
+    "custom": "직접 설정한 기준",
+}
+
 
 def min_max_normalize(values: List[float]) -> List[float]:
     """0~1 사이로 정규화. 값이 전부 같으면 중립값(0.5)으로 처리."""
@@ -148,7 +160,10 @@ def explain_recommendation(results: List[Dict], goal: str) -> str:
     best = results[0]
     top_factor = max(best["breakdown"], key=best["breakdown"].get)
     factor_name = NUTRIENT_LABELS.get(top_factor, top_factor)
-    return f"'{best['name']}'가 '{goal}' 목표에 가장 적합합니다. 특히 {factor_name} 항목에서 다른 제품 대비 유리했습니다."
+    # goal이 프리셋 영문 키(weight_loss 등)이거나 "custom"이면 한글 라벨로 바꾸고,
+    # 그 외(health_text처럼 사용자가 직접 적은 한글 문장)는 그대로 사용한다.
+    label = GOAL_LABELS_KO.get(goal, goal)
+    return f"'{best['name']}'가 '{label}' 목표에 가장 적합합니다. 특히 {factor_name} 항목에서 다른 제품 대비 유리했습니다."
 
 
 # ---------------------------------------------------------------------------
