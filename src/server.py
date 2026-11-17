@@ -18,6 +18,8 @@ from nutrition_scoring import (
     explain_recommendation,
     get_weights_from_health_text,
     GOAL_WEIGHTS,
+    LOWER_IS_BETTER,
+    NUTRIENT_LABELS,
 )
 
 app = Flask(__name__)
@@ -64,8 +66,8 @@ def recommend():
         return jsonify({"error": "products는 최소 1개 이상의 배열이어야 합니다."}), 400
 
     try:
-        products = [Product(name=p["name"], nutrients=p["nutrients"]) for p in raw_products]
-    except (KeyError, TypeError) as e:
+        products = [Product(name=p["name"], nutrients=dict(p["nutrients"])) for p in raw_products]
+    except (KeyError, TypeError, ValueError) as e:
         return jsonify({"error": f"products 형식이 올바르지 않습니다: {e}"}), 400
 
     goal = body.get("goal")
@@ -87,14 +89,52 @@ def recommend():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    ranked = score_products(products, custom_weights=weights_used)
+    # 값이 빠진 항목은 score_products가 비교에서 제외한다.
+    # 남는 항목이 없으면 ValueError -> 422로 돌려서 프론트가 "직접 입력" 안내를 띄우게 한다.
+    try:
+        ranked, meta = score_products(products, custom_weights=weights_used, return_meta=True)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 422
+
     label = health_text or goal or "custom"
-    recommendation = explain_recommendation(ranked, label)
+    recommendation = explain_recommendation(ranked, label, excluded=meta["excluded"])
 
     return jsonify({
-        "weights_used": weights_used,
+        "weights_used": meta["weights_used"],   # 실제로 점수에 쓴 가중치
+        "requested_weights": weights_used,      # 요청한 가중치 (제외 전)
+        "excluded": meta["excluded"],           # 값이 없어 비교에서 뺀 항목
         "ranked": ranked,
         "recommendation": recommendation,
+    })
+
+
+@app.route("/interpret", methods=["POST"])
+def interpret():
+    """
+    자유 서술을 입력하는 즉시 해석해서, 화면이 "어떻게 이해했는지" 사용자에게 보여줄 수 있게 한다.
+    요청: {"health_text": "당뇨 초기예요"}
+    응답: {
+      "weights": {"sugar": 1.3, "carb": 1.0},   // /recommend에 custom_weights로 그대로 넘기면 됨
+      "lower":  ["당류", "탄수화물"],            // 적을수록 좋은 항목 (가중치 큰 순)
+      "higher": ["단백질"]                       // 많을수록 좋은 항목
+    }
+    해석할 수 없는 문장이면 422와 error 메시지를 돌려준다.
+    """
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("health_text") or "").strip()[:300]  # 너무 긴 입력은 잘라서 비용·지연 방지
+    if not text:
+        return jsonify({"error": "health_text가 비어 있습니다."}), 400
+
+    try:
+        weights = get_weights_from_health_text(text)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 422
+
+    ordered = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)
+    return jsonify({
+        "weights": weights,
+        "lower": [NUTRIENT_LABELS.get(k, k) for k, _ in ordered if LOWER_IS_BETTER.get(k, True)],
+        "higher": [NUTRIENT_LABELS.get(k, k) for k, _ in ordered if not LOWER_IS_BETTER.get(k, True)],
     })
 
 
